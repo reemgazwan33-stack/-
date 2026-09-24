@@ -159,3 +159,6 @@ def setup():
         return result
     except Exception as e:
         return {"error": str(e)}, 500
+ @app.get("/status")
+def status():
+    return telegram("getWebhookInfo")       
