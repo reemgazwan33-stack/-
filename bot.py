@@ -144,3 +144,18 @@ try:
 
 except Exception as e:
     print("WEBHOOK ERROR:", e, flush=True)
+    
+@app.get("/setup")
+def setup():
+    try:
+        result = telegram(
+            "setWebhook",
+            {
+                "url": WEBHOOK_URL,
+                "allowed_updates": ["business_message"],
+                "drop_pending_updates": False
+            }
+        )
+        return result
+    except Exception as e:
+        return {"error": str(e)}, 500
