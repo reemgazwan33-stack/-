@@ -1,24 +1,19 @@
 import os
-import time
-import json
-import threading
 import requests
-from flask import Flask
+from flask import Flask, request
 from google import genai
 from google.genai import types
-
-# =========================
-# الإعدادات
-# =========================
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 MODEL = "gemini-2.5-flash"
 
+app = Flask(__name__)
+
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-app = Flask(__name__)
+WEBHOOK_URL = "https://telegram-ai-bot-335e.onrender.com/telegram-webhook"
 
 SYSTEM_PROMPT = """
 أنت مساعد شخصي للرد على رسائل Telegram.
@@ -26,44 +21,35 @@ SYSTEM_PROMPT = """
 مهمتك الرد على الأشخاص الذين يرسلون رسائل إلى الحساب بطريقة طبيعية، ودودة، ومحترمة.
 
 قواعد الرد:
-- اكتب بالعربية بشكل أساسي.
-- استخدم اللهجة السعودية بشكل خفيف وطبيعي.
+- اكتب بالعربية بشكل أساسي، واستخدم اللهجة السعودية بشكل خفيف وطبيعي.
 - اجعل الرد مختصرًا وواضحًا.
 - افهم سؤال الشخص ثم أجب مباشرة.
-- لا تقل إنك روبوت أو ذكاء اصطناعي إلا إذا سُئلت مباشرة.
-- لا تخترع معلومات أو أسعارًا أو مواعيد أو وعودًا.
+- لا تذكر أنك روبوت أو ذكاء اصطناعي إلا إذا سُئلت بشكل مباشر.
+- لا تخترع معلومات أو مواعيد أو أسعار أو وعود غير معروفة.
 - إذا لم تعرف الإجابة، قل إنك تحتاج للتأكد.
-- لا ترسل عدة رسائل متتالية.
+- لا ترسل رسائل كثيرة متتالية.
+- كن لطيفًا وطبيعيًا.
 - استخدم الإيموجي باعتدال 😊
 - إذا كانت الرسالة تحية، رد بتحية لطيفة.
 - إذا كانت الرسالة غير واضحة، اطلب توضيحًا بسيطًا.
-- لا تكشف أي معلومات خاصة أو كلمات مرور أو رموز.
-- لا تتخذ قرارات مهمة نيابة عن صاحب الحساب.
+- لا تكشف أي معلومات خاصة أو كلمات مرور أو رموز أو بيانات حساسة.
+- إذا احتاج الموضوع تدخل صاحب الحساب، قل إن صاحب الحساب سيرد عليه لاحقًا.
 """
 
-# =========================
-# صفحة Render
-# =========================
 
 @app.get("/")
 def home():
     return "Telegram AI Bot is running."
 
 
-# =========================
-# Telegram API
-# =========================
-
-def telegram(method, data=None, timeout=60):
+def telegram(method, data=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
 
     response = requests.post(
         url,
         json=data or {},
-        timeout=timeout
+        timeout=60
     )
-
-    response.raise_for_status()
 
     result = response.json()
 
@@ -72,10 +58,6 @@ def telegram(method, data=None, timeout=60):
 
     return result
 
-
-# =========================
-# الذكاء الاصطناعي
-# =========================
 
 def get_ai_reply(text):
     response = client.models.generate_content(
@@ -96,160 +78,69 @@ def get_ai_reply(text):
     return reply
 
 
-# =========================
-# استقبال رسائل Telegram
-# =========================
+@app.post("/telegram-webhook")
+def telegram_webhook():
 
-def run_bot():
+    update = request.get_json(silent=True) or {}
 
-    print("BOT STARTING...", flush=True)
+    print("UPDATE RECEIVED:", update, flush=True)
 
-    # حذف أي Webhook قديم حتى يعمل getUpdates
+    message = update.get("business_message")
+
+    if not message:
+        return "ok", 200
+
+    text = message.get("text")
+    business_connection_id = message.get("business_connection_id")
+    chat_id = message.get("chat", {}).get("id")
+
+    if not text:
+        return "ok", 200
+
+    if not business_connection_id:
+        print("No business_connection_id", flush=True)
+        return "ok", 200
+
+    if chat_id is None:
+        print("No chat_id", flush=True)
+        return "ok", 200
+
+    print("NEW MESSAGE:", text, flush=True)
+
     try:
+        reply = get_ai_reply(text)
+
+        print("AI REPLY:", reply, flush=True)
+
         telegram(
-            "deleteWebhook",
+            "sendMessage",
             {
-                "drop_pending_updates": False
+                "business_connection_id": business_connection_id,
+                "chat_id": chat_id,
+                "text": reply
             }
         )
 
-        print("Webhook deleted.", flush=True)
+        print("REPLY SENT", flush=True)
 
     except Exception as e:
-        print("Webhook error:", e, flush=True)
+        print("REPLY ERROR:", e, flush=True)
 
-    offset = None
-
-    print("POLLING STARTED.", flush=True)
-
-    while True:
-
-        try:
-
-            params = {
-                "timeout": 50
-            }
-
-            if offset is not None:
-                params["offset"] = offset
-
-            response = requests.get(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
-                params=params,
-                timeout=60
-            )
-
-            data = response.json()
-
-            if not data.get("ok"):
-                print("Telegram error:", data, flush=True)
-                time.sleep(5)
-                continue
-
-            updates = data.get("result", [])
-
-            for update in updates:
-
-                offset = update["update_id"] + 1
-
-                print(
-                    "UPDATE:",
-                    json.dumps(update, ensure_ascii=False),
-                    flush=True
-                )
-
-                # رسالة Telegram Business
-                message = update.get("business_message")
-
-                if not message:
-                    continue
-
-                text = message.get("text")
-
-                business_connection_id = message.get(
-                    "business_connection_id"
-                )
-
-                chat_id = message.get(
-                    "chat",
-                    {}
-                ).get("id")
-
-                if not text:
-                    print("No text message.", flush=True)
-                    continue
-
-                if not business_connection_id:
-                    print(
-                        "No business_connection_id.",
-                        flush=True
-                    )
-                    continue
-
-                if chat_id is None:
-                    print(
-                        "No chat_id.",
-                        flush=True
-                    )
-                    continue
-
-                print(
-                    f"NEW MESSAGE: {text}",
-                    flush=True
-                )
-
-                try:
-
-                    reply = get_ai_reply(text)
-
-                    print(
-                        f"AI REPLY: {reply}",
-                        flush=True
-                    )
-
-                    telegram(
-                        "sendMessage",
-                        {
-                            "business_connection_id":
-                                business_connection_id,
-
-                            "chat_id":
-                                chat_id,
-
-                            "text":
-                                reply
-                        }
-                    )
-
-                    print(
-                        "REPLY SENT.",
-                        flush=True
-                    )
-
-                except Exception as e:
-
-                    print(
-                        "REPLY ERROR:",
-                        e,
-                        flush=True
-                    )
-
-        except Exception as e:
-
-            print(
-                "POLL ERROR:",
-                e,
-                flush=True
-            )
-
-            time.sleep(5)
+    return "ok", 200
 
 
-# =========================
-# تشغيل البوت
-# =========================
+# تسجيل Webhook في Telegram
+try:
+    result = telegram(
+        "setWebhook",
+        {
+            "url": WEBHOOK_URL,
+            "allowed_updates": ["business_message"],
+            "drop_pending_updates": False
+        }
+    )
 
-threading.Thread(
-    target=run_bot,
-    daemon=True
-).start()
+    print("WEBHOOK SET:", result, flush=True)
+
+except Exception as e:
+    print("WEBHOOK ERROR:", e, flush=True)
