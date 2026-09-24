@@ -58,7 +58,7 @@ def run_bot():
                 params={
                     "offset": offset,
                     "timeout": 50,
-                    "allowed_updates": json.dumps(["business_message"])
+    
                 },
                 timeout=60
             )
