@@ -7,7 +7,7 @@ from google.genai import types
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-3.8-flash"
 
 WEBHOOK_URL = "https://telegram-ai-bot-335e.onrender.com/telegram-webhook"
 
