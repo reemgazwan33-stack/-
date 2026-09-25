@@ -27,12 +27,15 @@ SYSTEM_PROMPT = """
 - اجعل الرد مختصرًا وواضحًا.
 - افهم سؤال الشخص ثم أجب مباشرة.
 - لا تذكر أنك روبوت أو ذكاء اصطناعي إلا إذا سُئلت مباشرة.
-- لا تخترع معلومات أو مواعيد أو أسعار.
+- لا تخترع معلومات أو مواعيد أو أسعار أو وعود.
 - إذا لم تعرف الإجابة، قل إنك تحتاج للتأكد.
+- لا ترسل رسائل كثيرة متتالية.
+- كن لطيفًا وطبيعيًا.
 - استخدم الإيموجي باعتدال 😊
 - إذا كانت الرسالة تحية، رد بتحية لطيفة.
 - إذا كانت الرسالة غير واضحة، اطلب توضيحًا بسيطًا.
-- لا تكشف كلمات المرور أو الرموز أو البيانات الخاصة.
+- لا تكشف أي معلومات خاصة أو كلمات مرور أو رموز أو بيانات حساسة.
+- إذا احتاج الموضوع تدخل صاحب الحساب، قل إن صاحب الحساب سيرد عليه لاحقًا.
 """
 
 
@@ -45,7 +48,12 @@ def telegram(method, data=None):
         timeout=60
     )
 
-    return response.json()
+    result = response.json()
+
+    if not result.get("ok"):
+        raise Exception(result)
+
+    return result
 
 
 def get_ai_reply(text):
@@ -74,19 +82,23 @@ def home():
 
 @app.get("/setup")
 def setup():
-    result = telegram(
-        "setWebhook",
-        {
-            "url": WEBHOOK_URL,
-            "allowed_updates": [
-                "message",
-                "business_message"
-            ],
-            "drop_pending_updates": False
-        }
-    )
+    try:
+        result = telegram(
+            "setWebhook",
+            {
+                "url": WEBHOOK_URL,
+                "allowed_updates": [
+                    "message",
+                    "business_message"
+                ],
+                "drop_pending_updates": False
+            }
+        )
 
-    return result
+        return result
+
+    except Exception as e:
+        return {"error": str(e)}, 500
 
 
 @app.get("/status")
@@ -101,7 +113,7 @@ def telegram_webhook():
 
     print("UPDATE RECEIVED:", update, flush=True)
 
-    # أوامر البوت العادي
+    # رسائل البوت العادي
     message = update.get("message")
 
     if message:
@@ -109,7 +121,11 @@ def telegram_webhook():
         chat_id = message.get("chat", {}).get("id")
         text = (message.get("text") or "").strip()
 
+        if chat_id is None:
+            return "ok", 200
+
         if text.startswith("/start"):
+
             reply = (
                 "هلا 👋\n"
                 "أنا بوت إدارة المحادثات 🤖\n"
@@ -117,6 +133,7 @@ def telegram_webhook():
             )
 
         elif text.startswith("/help"):
+
             reply = (
                 "الأوامر المتاحة:\n\n"
                 "/start - تشغيل البوت\n"
@@ -125,11 +142,14 @@ def telegram_webhook():
             )
 
         elif text.startswith("/status"):
+
             reply = "البوت شغال ✅"
 
         else:
+
             try:
                 reply = get_ai_reply(text)
+
             except Exception as e:
                 print("AI ERROR:", e, flush=True)
                 reply = "صار خطأ بسيط، حاول مرة ثانية 😊"
@@ -144,16 +164,21 @@ def telegram_webhook():
 
         return "ok", 200
 
+
     # رسائل Telegram Business
     business_message = update.get("business_message")
 
     if business_message:
 
         text = (business_message.get("text") or "").strip()
+
         business_connection_id = business_message.get(
             "business_connection_id"
         )
-        chat_id = business_message.get("chat", {}).get("id")
+
+        chat_id = business_message.get(
+            "chat", {}
+        ).get("id")
 
         if not text:
             return "ok", 200
@@ -166,6 +191,16 @@ def telegram_webhook():
 
         try:
 
+            # إظهار "يكتب..." أثناء تجهيز الرد
+            telegram(
+                "sendChatAction",
+                {
+                    "business_connection_id": business_connection_id,
+                    "chat_id": chat_id,
+                    "action": "typing"
+                }
+            )
+
             reply = get_ai_reply(text)
 
             telegram(
@@ -177,10 +212,18 @@ def telegram_webhook():
                 }
             )
 
-            print("REPLY SENT:", reply, flush=True)
+            print(
+                "REPLY SENT:",
+                reply,
+                flush=True
+            )
 
         except Exception as e:
 
-            print("REPLY ERROR:", e, flush=True)
+            print(
+                "REPLY ERROR:",
+                e,
+                flush=True
+            )
 
     return "ok", 200
